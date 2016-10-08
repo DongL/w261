@@ -3,7 +3,8 @@ from mrjob.job import MRJob
 import sys
 
 class GlobalState(MRJob):
-    GlobalList = []
+    def __init__(self):
+        self.GlobalList = []
     
     def mapper_init(self):
         print("cat", file=sys.stderr)
