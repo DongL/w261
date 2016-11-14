@@ -7,8 +7,10 @@ class InvertIndex(MRJob):
     MRJob.input_protocol = JSONProtocol
     
     def mapper(self, key, words):
+        """
+        Convert each stripe to inverted index
+        """
         n_words = len(words)
-        
         for word in words: 
             yield (word, {key:n_words})
             

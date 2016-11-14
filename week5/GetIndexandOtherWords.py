@@ -87,7 +87,7 @@ class GetIndexandOtherWords(MRJob):
             raise ValueError("""--top-n-words value (currently %d) must be equal to or greater than
                              --index-range value (currently %d).""" % (top_n_words, last_index_word))
         
-        self.stop_words =  {'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 
+        self.stop_words =  set(['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 
                             'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 
                             'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 
                             'its', 'itself', 'they', 'them', 'their', 'theirs', 
@@ -103,7 +103,7 @@ class GetIndexandOtherWords(MRJob):
                             'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 
                             'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 
                             'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 
-                            'can', 'will', 'just', 'don', 'should', 'now'}
+                            'can', 'will', 'just', 'don', 'should', 'now'])
         
     def mapper(self, _, lines):
         terms, term_count, page_count, book_count = lines.split("\t")

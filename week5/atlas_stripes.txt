@@ -1,4 +1,4 @@
 "atlas"	{"dipped": 15, "boon": 50}
-"boon"	{"dipped": 10, "cava": 10, "atlas": 50}
-"cava"	{"boon": 10, "dipped": 10}
-"dipped"	{"boon": 10, "atlas": 15, "cava": 10}
+"boon"	{"atlas": 50, "dipped": 10, "cava": 10}
+"cava"	{"dipped": 10, "boon": 10}
+"dipped"	{"atlas": 15, "boon": 10, "cava": 10}

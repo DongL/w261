@@ -1,0 +1,5 @@
+"/regwiz",1000
+"/support",1001
+"/athome",1002
+"/kb",1003
+"/search",1004

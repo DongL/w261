@@ -1,5 +1,6 @@
 
 from mrjob.job import MRJob
+
 # Avoid broken pipe error
 from signal import signal, SIGPIPE, SIG_DFL
 signal(SIGPIPE,SIG_DFL) 
