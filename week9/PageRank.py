@@ -1,4 +1,3 @@
-
 from __future__ import print_function, division
 import itertools
 from mrjob.job import MRJob
@@ -31,12 +30,7 @@ class PageRank(MRJob):
         self.values = {"****Total PR": 0.0,
                        "***n_nodes": 0.0,
                        "**Distribute": 0.0}
-        self.n_reducers = 2
-        
-    def mapper_final(self):
-        for key, value in self.values.items():
-            for k in range(self.n_reducers):
-                yield (k, (key, value))
+        self.n_reducers = 3
     
     def mapper(self, key, lines):
         n_reducers = self.n_reducers
@@ -46,10 +40,13 @@ class PageRank(MRJob):
         # each iteration
         if key in ["****Total PR"]:
             raise StopIteration
-        if key in ["**Distribute", "***n_nodes"]:
+        if key in ["**Distribute"]:
             # !!! This is where the special
             # hash to the same reducer code
             # will need to go.
+            self.values[key] += lines
+            raise StopIteration
+        if key in ["***n_nodes"]:
             self.values[key] += lines
             raise StopIteration
         # Handles the first time the 
@@ -61,8 +58,8 @@ class PageRank(MRJob):
             default_PR = 1/n_nodes
             lines = {"links":lines, 
                      "PR": default_PR}
-            # Also perform a node count
-            self.values["***n_nodes"] += 1.0
+        # Perform a node count each time
+        self.values["***n_nodes"] += 1.0
         PR = lines["PR"]
         links = lines["links"]
         n_links = len(links)
@@ -81,9 +78,15 @@ class PageRank(MRJob):
         else:
             self.values["**Distribute"] = PR
 
+    def mapper_final(self):
+        for key, value in self.values.items():
+            for k in range(self.n_reducers):
+                yield (k, (key, value))
+            
     def reducer_init(self):
         self.to_distribute = None
         self.n_nodes = None
+        self.cached_n_nodes = None
         self.total_pr = None
     
     def reducer(self, hash_key, combo_values):
@@ -112,7 +115,6 @@ class PageRank(MRJob):
                 yield (key, total)
             elif key == "***n_nodes":
                 self.n_nodes = total
-                yield (key, total)
             elif key == "**Distribute":
                 extra_mass = total
                 # Because the node_count and
@@ -141,7 +143,7 @@ class PageRank(MRJob):
                            mapper=self.mapper,
                            mapper_final=self.mapper_final,
                            reducer_init=self.reducer_init,
-                           reducer=self.reducer)]*15
+                           reducer=self.reducer)]*5
         return mr_steps
 
 
