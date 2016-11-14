@@ -26,11 +26,20 @@ class PageRank(MRJob):
             updated after the first
             iteration.""")
         
+        self.add_passthrough_option(
+            '--reduce.tasks', 
+            dest='reducers', 
+            type='int',
+            help="""number of reducers
+            to use. Controls the hash
+            space of the custom
+            partitioner""")
+        
     def mapper_init(self):
         self.values = {"****Total PR": 0.0,
                        "***n_nodes": 0.0,
                        "**Distribute": 0.0}
-        self.n_reducers = 3
+        self.n_reducers = self.options.reducers
     
     def mapper(self, key, lines):
         n_reducers = self.n_reducers
@@ -89,6 +98,10 @@ class PageRank(MRJob):
         self.cached_n_nodes = None
         self.total_pr = None
     
+    def reducer_final(self):
+        print("Total PageRank", self.total_pr)
+
+    
     def reducer(self, hash_key, combo_values):
         gen_values = itertools.groupby(combo_values, 
                                        key=lambda x:x[0])
@@ -112,7 +125,6 @@ class PageRank(MRJob):
                 yield (key, node_info)
             elif key == "****Total PR":
                 self.total_pr = total
-                yield (key, total)
             elif key == "***n_nodes":
                 self.n_nodes = total
             elif key == "**Distribute":
@@ -143,7 +155,8 @@ class PageRank(MRJob):
                            mapper=self.mapper,
                            mapper_final=self.mapper_final,
                            reducer_init=self.reducer_init,
-                           reducer=self.reducer)]*5
+                           reducer=self.reducer,
+                           reducer_final=self.reducer_final)]*5
         return mr_steps
 
 
