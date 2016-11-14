@@ -17,7 +17,11 @@ class PageRank(MRJob):
             dest='n_nodes', 
             type='float',
             help="""number of nodes 
-            that have outlinks""")
+            that have outlinks. You can
+            guess at this because the
+            exact number will be 
+            updated after the first
+            iteration.""")
     
     def mapper_init(self):
         n = self.options.n_nodes
@@ -44,7 +48,7 @@ class PageRank(MRJob):
             lines = {"links":lines, 
                      "PR": default_PR}
             # Also perform a node count
-            yield ("***n_nodes", 1)
+            yield ("***n_nodes", 1.0)
         PR = lines["PR"]
         links = lines["links"]
         n_links = len(links)
@@ -74,15 +78,17 @@ class PageRank(MRJob):
         node_info = None
         
         for val in values:
-            if isinstance(val, (float, 
-                                int)):
+            if isinstance(val, float):
                 total += val
             else:
                 node_info = val
                 
         if node_info:
-            to_distribute = self.to_distribute or 0
-            new_pr = total + to_distribute
+            distribute = self.to_distribute or 0
+            pr = total + distribute
+            decayed_pr = .85 * pr
+            teleport_pr = .15/self.n_nodes
+            new_pr = decayed_pr + teleport_pr
             node_info["PR"] = new_pr
             yield (key, node_info)
         elif key == "****Total PR":
@@ -93,6 +99,11 @@ class PageRank(MRJob):
             yield (key, total)
         elif key == "**Distribute":
             extra_mass = total
+            # Because the node_count and
+            # the mass distribution are 
+            # eventually consistent, a
+            # simple correction for any early
+            # discrepancies is a good fix
             excess_pr = self.total_pr - 1
             weight = extra_mass - excess_pr
             self.to_distribute = weight/self.n_nodes
@@ -104,7 +115,7 @@ class PageRank(MRJob):
             # explicitly tracked, the mapper
             # can handle them from now on.
             yield ("**Distribute", total)
-            yield ("***n_nodes", 1)
+            yield ("***n_nodes", 1.0)
             yield (key, {"PR": total, 
                          "links": []})
             
@@ -112,7 +123,7 @@ class PageRank(MRJob):
         mr_steps = [MRStep(mapper_init=self.mapper_init,
                            mapper=self.mapper,
                            reducer_init=self.reducer_init,
-                           reducer=self.reducer)]*5
+                           reducer=self.reducer)]*100
         return mr_steps
         
 if __name__ == "__main__":
