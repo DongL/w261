@@ -4,7 +4,7 @@ from mrjob.job import MRJob
 from mrjob.job import MRStep
 from mrjob.protocol import JSONProtocol
 from sys import stderr
-
+from random import random
 
 class PageRank(MRJob):
     INPUT_PROTOCOL = JSONProtocol
@@ -43,10 +43,22 @@ class PageRank(MRJob):
         self.add_passthrough_option(
             '--damping_factor', 
             dest='d', 
+            default=.85,
             type='float',
             help="""Is the damping
             factor. Must be between
             0 and 1.""")
+        
+        self.add_passthrough_option(
+            '--smart_updating', 
+            dest='smart_updating', 
+            type='str',
+            default="False",
+            help="""Can be True or
+            False. If True, all updates
+            to the new PR will take into
+            account the value of the old
+            PR.""")
         
     def mapper_init(self):
         self.values = {"****Total PR": 0.0,
@@ -104,6 +116,15 @@ class PageRank(MRJob):
             
     def reducer_init(self):
         self.d = self.options.d
+        smart = self.options.smart_updating
+        if smart == "True":
+            self.smart = True
+        elif smart == "False":
+            self.smart = False
+        else:
+            msg = """--smart_updating should 
+                       be True or False"""
+            raise Exception(msg)
         self.to_distribute = None
         self.n_nodes = None
         self.total_pr = None
@@ -122,11 +143,30 @@ class PageRank(MRJob):
                     node_info = val
 
             if node_info:
+                old_pr = node_info["PR"]
                 distribute = self.to_distribute or 0
                 pr = total + distribute
                 decayed_pr = self.d * pr
                 teleport_pr = (1-self.d)/self.n_nodes
                 new_pr = decayed_pr + teleport_pr
+                if self.smart:
+                    # If the new value is at least
+                    # 30% different than the old
+                    # value, set the new PR to be
+                    # 90% of the new value and 10%
+                    # of the old value. Else, 
+                    # set the new PR to be 75% of
+                    # the new value and 25% of the 
+                    # old value.
+                    diff = abs(new_pr - old_pr)
+                    percent_diff = diff/old_pr
+                    if percent_diff > .3:
+                        weight = 1
+                    else:
+                        weight = .75
+                    new_portion = new_pr * weight
+                    old_portion = old_pr * (1-weight)
+                    new_pr = new_portion + old_portion
                 node_info["PR"] = new_pr
                 yield (key, node_info)
             elif key == "****Total PR":
