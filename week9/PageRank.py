@@ -5,8 +5,6 @@ from mrjob.job import MRStep
 from mrjob.protocol import JSONProtocol
 from sys import stderr
 
-def push(key, value):
-    yield (key, value)
 
 class PageRank(MRJob):
     INPUT_PROTOCOL = JSONProtocol
@@ -35,6 +33,21 @@ class PageRank(MRJob):
             space of the custom
             partitioner""")
         
+        self.add_passthrough_option(
+            '--iterations', 
+            dest='iterations', 
+            type='int',
+            help="""number of iterations
+            to perform.""")
+        
+        self.add_passthrough_option(
+            '--damping_factor', 
+            dest='d', 
+            type='float',
+            help="""Is the damping
+            factor. Must be between
+            0 and 1.""")
+        
     def mapper_init(self):
         self.values = {"****Total PR": 0.0,
                        "***n_nodes": 0.0,
@@ -50,9 +63,6 @@ class PageRank(MRJob):
         if key in ["****Total PR"]:
             raise StopIteration
         if key in ["**Distribute"]:
-            # !!! This is where the special
-            # hash to the same reducer code
-            # will need to go.
             self.values[key] += lines
             raise StopIteration
         if key in ["***n_nodes"]:
@@ -93,15 +103,11 @@ class PageRank(MRJob):
                 yield (k, (key, value))
             
     def reducer_init(self):
+        self.d = self.options.d
         self.to_distribute = None
         self.n_nodes = None
-        self.cached_n_nodes = None
         self.total_pr = None
-    
-    def reducer_final(self):
-        print("Total PageRank", self.total_pr)
 
-    
     def reducer(self, hash_key, combo_values):
         gen_values = itertools.groupby(combo_values, 
                                        key=lambda x:x[0])
@@ -118,8 +124,8 @@ class PageRank(MRJob):
             if node_info:
                 distribute = self.to_distribute or 0
                 pr = total + distribute
-                decayed_pr = .85 * pr
-                teleport_pr = .15/self.n_nodes
+                decayed_pr = self.d * pr
+                teleport_pr = (1-self.d)/self.n_nodes
                 new_pr = decayed_pr + teleport_pr
                 node_info["PR"] = new_pr
                 yield (key, node_info)
@@ -149,15 +155,20 @@ class PageRank(MRJob):
                 yield (key, {"PR": total, 
                              "links": []})
 
-             
+    def reducer_final(self):
+        print_info = False
+        if print_info:
+            print("Total PageRank", self.total_pr)
+        
     def steps(self):
+        iterations = self.options.iterations
         mr_steps = [MRStep(mapper_init=self.mapper_init,
                            mapper=self.mapper,
                            mapper_final=self.mapper_final,
                            reducer_init=self.reducer_init,
                            reducer=self.reducer,
-                           reducer_final=self.reducer_final)]*5
-        return mr_steps
+                           reducer_final=self.reducer_final)]
+        return mr_steps*iterations
 
 
 if __name__ == "__main__":
