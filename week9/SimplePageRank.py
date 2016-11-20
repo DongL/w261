@@ -3,8 +3,38 @@ from sys import stderr
 import itertools
 from mrjob.job import MRJob, MRStep
 import json
+import heapq
 
-class SimplePageRank(MRJob):    
+
+class TopList(list):
+    def __init__(self, max_size, num_position=0):
+        """
+        Just like a list, except the append method adds the new value to the 
+        list only if it is larger than the smallest value (or if the size of 
+        the list is less than max_size). 
+        
+        If each element of the list is an int or float, uses that value for 
+        comparison. If the elements in the list are lists or tuples, uses the 
+        list_position element of the list or tuple for the comparison.
+        """
+        self.max_size = max_size
+        self.pos = num_position
+        
+    def _get_key(self, x):
+        return x[self.pos] if isinstance(x, (list, tuple)) else x
+        
+    def append(self, val):
+        if len(self) < self.max_size:
+            heapq.heappush(self, val)
+        elif self._get_key(self[0]) < self._get_key(val):
+            heapq.heapreplace(self, val)
+            
+    def final_sort(self):
+        return sorted(self, key=self._get_key, reverse=True)
+    
+    
+class SimplePageRank(MRJob):
+    MRJob.SORT_VALUES = True
     def configure_options(self):
         super(SimplePageRank, 
               self).configure_options()
@@ -62,12 +92,6 @@ class SimplePageRank(MRJob):
         
         n_reducers = self.n_reducers
         key_hash = hash(key)%n_reducers
-        # Handles special keys
-        if key in ["**Distribute", 
-                   "***n_nodes"]:
-            val = line
-            self.values[key] += val
-            raise StopIteration
         
         # Perform a node count each time
         self.values["***n_nodes"] += 1
@@ -82,7 +106,7 @@ class SimplePageRank(MRJob):
             PR_to_send = PR/n_links
             for link in links:
                 link_hash = hash(link)%n_reducers
-                yield (link_hash, (link, 
+                yield (int(link_hash), (link, 
                                    PR_to_send))
         # If it is a dangling node, 
         # distribute its PR to all
@@ -91,13 +115,14 @@ class SimplePageRank(MRJob):
             self.values["**Distribute"] += PR
             
         # Pass original node onward
-        yield (key_hash, (key, line))
+        yield (int(key_hash), (key, line))
 
     def mapper_final(self):
         # Push special keys to each unique hash
         for key, value in self.values.items():
             for k in range(self.n_reducers):
-                yield (k, (key, value))
+                yield (int(k), (key, value))
+                
             
     def reducer_init(self):
         self.d = self.options.d
@@ -178,10 +203,24 @@ class SimplePageRank(MRJob):
                 # iteration. By making them
                 # explicitly tracked, the mapper
                 # can handle them from now on.
-                yield ("**Distribute", total)
-                yield ("***n_nodes", 1)
                 yield (key, {"PR": 1, 
                              "links": []})
+                
+    def reduce_file_size(self, key, value):
+        val = value["PR"]
+        if val > .1:
+            yield ("top", (key, round(val,4)))
+    
+    def collect_in_one_file_init(self):
+        self.top_100 = TopList(100, 1)
+    
+    def collect_in_one_file(self, key, values):
+        for val in values:
+            self.top_100.append(val)
+            
+    def collect_in_one_file_final(self):
+        for val in self.top_100.final_sort():
+            yield val
 
     def steps(self):
         iterations = self.options.iterations
@@ -194,7 +233,12 @@ class SimplePageRank(MRJob):
                            reducer_init=self.reducer_init,
                            reducer=self.reducer
                             )]*iterations
-                   )
+                    +
+                    [MRStep(mapper=self.reduce_file_size,
+                            reducer_init=self.collect_in_one_file_init,
+                            reducer=self.collect_in_one_file,
+                            reducer_final=self.collect_in_one_file_final)]
+                    )
         return mr_steps
 
 
