@@ -1,28 +1,14 @@
-from __future__ import print_function, division
-import itertools
-from mrjob.job import MRJob
-from mrjob.job import MRStep
-from mrjob.protocol import JSONProtocol
+from __future__ import division, print_function
 from sys import stderr
-from random import random
+import itertools
+from mrjob.job import MRJob, MRStep
 import json
 
-class WikiPageRank(MRJob):    
+class SimplePageRank(MRJob):    
     def configure_options(self):
-        super(WikiPageRank, 
+        super(SimplePageRank, 
               self).configure_options()
 
-        self.add_passthrough_option(
-            '--n_nodes', 
-            dest='n_nodes', 
-            type='float',
-            help="""number of nodes 
-            that have outlinks. You can
-            guess at this because the
-            exact number will be 
-            updated after the first
-            iteration.""")
-        
         self.add_passthrough_option(
             '--reduce.tasks', 
             dest='reducers', 
@@ -34,7 +20,8 @@ class WikiPageRank(MRJob):
         
         self.add_passthrough_option(
             '--iterations', 
-            dest='iterations', 
+            dest='iterations',
+            default=5,
             type='int',
             help="""number of iterations
             to perform.""")
@@ -62,47 +49,32 @@ class WikiPageRank(MRJob):
     def clean_data(self, _, lines):
         key, value = lines.split("\t")
         value = json.loads(value.replace("'", '"'))
-        values = value.keys()
+        links = value.keys()
+        values = {"PR":1,"links":links}
         yield (str(key), values)
         
     def mapper_init(self):
-        self.values = {"****Total PR": 0.0,
-                       "***n_nodes": 0.0,
-                       "**Distribute": 0.0}
+        self.values = {"***n_nodes": 0,
+                       "**Distribute": 0}
         self.n_reducers = self.options.reducers
     
-    def mapper(self, key, lines):
+    def mapper(self, key, line):
+        
         n_reducers = self.n_reducers
         key_hash = hash(key)%n_reducers
         # Handles special keys
-        # Calculate new Total PR
-        # each iteration
-        if key in ["****Total PR"]:
+        if key in ["**Distribute", 
+                   "***n_nodes"]:
+            val = line
+            self.values[key] += val
             raise StopIteration
-        if key in ["**Distribute"]:
-            self.values[key] += lines
-            raise StopIteration
-        if key in ["***n_nodes"]:
-            self.values[key] += lines
-            raise StopIteration
-        # Handles the first time the 
-        # mapper is called. The lists
-        # are converted to dictionaries 
-        # with default PR values.
-        if isinstance(lines, list):
-            n_nodes = self.options.n_nodes
-            default_PR = 1/n_nodes
-            lines = {"links":lines, 
-                     "PR": default_PR}
+        
         # Perform a node count each time
-        self.values["***n_nodes"] += 1.0
-        PR = lines["PR"]
-        links = lines["links"]
+        self.values["***n_nodes"] += 1
+        PR = line["PR"]
+        links = line["links"]
         n_links = len(links)
-        # Pass node onward
-        yield (key_hash, (key, lines))
-        # Track total PR in system
-        self.values["****Total PR"] += PR
+        
         # If it is not a dangling node
         # distribute its PR to the 
         # other links.
@@ -110,11 +82,19 @@ class WikiPageRank(MRJob):
             PR_to_send = PR/n_links
             for link in links:
                 link_hash = hash(link)%n_reducers
-                yield (link_hash, (link, PR_to_send))
+                yield (link_hash, (link, 
+                                   PR_to_send))
+        # If it is a dangling node, 
+        # distribute its PR to all
+        # other links
         else:
-            self.values["**Distribute"] = PR
+            self.values["**Distribute"] += PR
+            
+        # Pass original node onward
+        yield (key_hash, (key, line))
 
     def mapper_final(self):
+        # Push special keys to each unique hash
         for key, value in self.values.items():
             for k in range(self.n_reducers):
                 yield (k, (key, value))
@@ -137,22 +117,35 @@ class WikiPageRank(MRJob):
     def reducer(self, hash_key, combo_values):
         gen_values = itertools.groupby(combo_values, 
                                        key=lambda x:x[0])
+        # Because we are using hash_key as a pseudo 
+        # partitioner, we have to unpack the unique
+        # keys within each generator to mimic standard
+        # mrjob functionality.
+        # gen_values should be treated as the standard
+        # generator made available in the reduce step
         for key, values in gen_values:
             total = 0
             node_info = None
 
             for key, val in values:
-                if isinstance(val, float):
+                # If the val is a number,
+                # accumulate total.
+                if isinstance(val, (float, int)):
                     total += val
                 else:
+                    # Means that the key-value
+                    # pair corresponds to a node
+                    # of the form. 
+                    # {"PR": ..., "links: [...]}
                     node_info = val
-
+            # Most keys will reference a node, so
+            # put this check first.
             if node_info:
                 old_pr = node_info["PR"]
                 distribute = self.to_distribute or 0
                 pr = total + distribute
                 decayed_pr = self.d * pr
-                teleport_pr = (1-self.d)/self.n_nodes
+                teleport_pr = 1-self.d
                 new_pr = decayed_pr + teleport_pr
                 if self.smart:
                     # If the new value is less than
@@ -164,26 +157,21 @@ class WikiPageRank(MRJob):
                     percent_diff = diff/old_pr
                     if percent_diff < .3:
                         new_pr = .8*new_pr + .2*old_pr
-                if new_pr < 0:
-                    new_pr = 0
                 node_info["PR"] = new_pr
                 yield (key, node_info)
-            elif key == "****Total PR":
-                self.total_pr = total
             elif key == "***n_nodes":
                 self.n_nodes = total
             elif key == "**Distribute":
-                extra_mass = total
                 # Because the node_count and
-                # the mass distribution are 
+                # the total distribution are 
                 # eventually consistent, a
                 # simple correction for any early
                 # discrepancies is a good fix
-                excess_pr = self.total_pr - 1
-                weight = extra_mass - excess_pr
-                self.to_distribute = weight/self.n_nodes
+                self.to_distribute = total/self.n_nodes
             else:
-                continue # !!!!!! Remove
+                # Catches dangling nodes. 
+                # Not a special key and no
+                # node information.
                 # The only time this should run
                 # is when dangling nodes are 
                 # discovered during the first
@@ -191,17 +179,10 @@ class WikiPageRank(MRJob):
                 # explicitly tracked, the mapper
                 # can handle them from now on.
                 yield ("**Distribute", total)
-                yield ("***n_nodes", 1.0)
-                yield (key, {"PR": total, 
+                yield ("***n_nodes", 1)
+                yield (key, {"PR": 1, 
                              "links": []})
 
-    def reducer_final(self):
-        print_info = False
-        if print_info:
-            print("Total PageRank", 
-                  self.total_pr, 
-                  file=stderr)
-        
     def steps(self):
         iterations = self.options.iterations
         mr_steps = ([MRStep(mapper=self.clean_data)] 
@@ -211,12 +192,11 @@ class WikiPageRank(MRJob):
                            mapper=self.mapper,
                            mapper_final=self.mapper_final,
                            reducer_init=self.reducer_init,
-                           reducer=self.reducer,
-                           reducer_final=self.reducer_final
+                           reducer=self.reducer
                             )]*iterations
                    )
         return mr_steps
 
 
 if __name__ == "__main__":
-    WikiPageRank.run()
+    SimplePageRank.run()
