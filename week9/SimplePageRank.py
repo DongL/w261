@@ -76,6 +76,15 @@ class SimplePageRank(MRJob):
             account the value of the old
             PR.""")
         
+        self.add_passthrough_option(
+            '--return_top_k', 
+            dest='return_top_k', 
+            type='int',
+            default=100,
+            help="""Returns the results
+            with the top k highest 
+            PageRank scores.""")
+        
     def clean_data(self, _, lines):
         key, value = lines.split("\t")
         value = json.loads(value.replace("'", '"'))
@@ -212,14 +221,15 @@ class SimplePageRank(MRJob):
             yield ("top", (key, round(val,4)))
     
     def collect_in_one_file_init(self):
-        self.top_100 = TopList(100, 1)
+        top_k = self.options.return_top_k
+        self.top_vals = TopList(top_k, 1)
     
     def collect_in_one_file(self, key, values):
         for val in values:
-            self.top_100.append(val)
+            self.top_vals.append(val)
             
     def collect_in_one_file_final(self):
-        for val in self.top_100.final_sort():
+        for val in self.top_vals.final_sort():
             yield val
 
     def steps(self):
